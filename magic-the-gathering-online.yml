@@ -1,0 +1,82 @@
+# Magic: The Gathering Online — Lutris install script (GE-Proton, 2026 edition)
+# =============================================================================
+# Verified working 2026-06-24 on Arch Linux with GE-Proton11-1 + Lutris 0.5.22.
+# Reaches the MTGO login screen (passes EULA validation, the historical crash point).
+#
+# What changed vs. the old community "LATEST" script (lutris.net id 16253):
+#   * Runner is GE-Proton (latest, via umu) instead of plain system Wine 5.x-era.
+#   * Drops obsolete winetricks verbs:
+#       - win7      : not needed — dotnet48 already leaves the prefix at Win7 SP1,
+#                     and GE-Proton defaults are fine.
+#       - sound=pulse : replaced with sound=disabled (see below).
+#   * ADDS  sound=disabled  — MTGO crashes under Wine the moment a sound is
+#     triggered (EULA validation / match start; WineHQ bug 48852). Disabling the
+#     Wine audio driver is the reliable fix. This is THE change that makes it run.
+#   * Launches setup.exe (the ClickOnce bootstrapper), NOT MTGO.exe directly.
+#     MTGO is a ClickOnce/.NET deployment; running the deployed MTGO.exe directly
+#     errors with "This is a networked application". setup.exe activates the
+#     installed app correctly.
+#   * Installs to ~/Games/magic-the-gathering-online (Lutris default for this slug).
+#
+# Install:  lutris -i magic-the-gathering-online.yml
+#           (or GUI: + → "Install game from a local file")
+name: Magic The Gathering Online
+game_slug: magic-the-gathering-online
+slug: magic-the-gathering-online-ge-proton
+version: GE-Proton (2026)
+runner: wine
+
+files:
+- setup:
+    filename: setup.exe
+    url: https://mtgo.patch.daybreakgames.com/patch/mtg/live/client/setup.exe
+
+game:
+  exe: $GAMEDIR/setup.exe
+  prefix: $GAMEDIR
+  arch: win64
+
+wine:
+  version: ge-proton
+
+# Disable GE-Proton11's brand-new in-kernel ntsync. With it, scrolling/searching the
+# collection convoyed MTGO's image-load threads on locks with delayed wakeups ->
+# 30s-2min freezes. fsync (the fallback) wakes them promptly and the freezes vanish.
+system:
+  env:
+    PROTON_NO_NTSYNC: '1'
+
+installer:
+- task:
+    name: create_prefix
+    arch: win64
+    prefix: $GAMEDIR
+- task:
+    name: winetricks
+    arch: win64
+    prefix: $GAMEDIR
+    app: corefonts dotnet48
+# Critical fix: disable Wine audio or MTGO crashes at the EULA/startup sound.
+- task:
+    name: winetricks
+    arch: win64
+    prefix: $GAMEDIR
+    app: sound=disabled
+# Run the ClickOnce bootstrapper to download + deploy the ~640 MB client.
+- task:
+    name: wineexec
+    arch: win64
+    prefix: $GAMEDIR
+    executable: setup
+    exclude_processes: dfsvc.exe
+# Keep setup.exe inside the prefix so the launcher (game.exe) can re-activate MTGO.
+- copy:
+    src: setup
+    dst: $GAMEDIR
+# Fix the collection-scroll/search freeze (CPU-bound WPF UI thread): turn on MTGO's
+# own WPF-under-Wine mitigations — disables the UI Automation peer storm and the
+# WPF stylus/touch input thread. (Reverts on MTGO update; re-run if it returns.)
+- execute:
+    command: >
+      find "$GAMEDIR" -path '*Apps/2.0*' -name MTGO.exe.config -exec sed -i -E
+      's/("(DisableAutomationPeer|PurgeAutomationEvents|DisableStylusInput|DisableTabletDevices)" value=")false/\1true/g' {} +
