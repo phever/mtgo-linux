@@ -7,9 +7,8 @@ Reaches the MTGO login screen; passes EULA validation (the historical crash poin
 
 | File | Purpose |
 |------|---------|
-| `magic-the-gathering-online.yml` | Lutris install script (GE-Proton, modernized). Import into Lutris to reproduce the whole install from scratch. |
-| `mtgo-launch.sh` | Launch the already-installed client directly (no Lutris needed). Applies all fixes. |
-| `mtgo-tune.py` | Re-applies the WPF performance flags to MTGO's config (run by the launcher; survives updates). |
+| `magic-the-gathering-online.yml` | Lutris install script (GE-Proton, modernized). Reproduces the whole install **and generates `mtgo-launch.sh` into the prefix**. |
+| `mtgo-launch.sh` | Self-contained launcher: auto-detects umu + newest GE-Proton, re-applies the WPF fix every run, disables ntsync. `--tune-only` just re-applies the config flags. |
 | `mtgo-diag.py` | The freeze diagnostic sampler (per-thread CPU/syscall/wait). Keep for future debugging. |
 
 (The `diag/` dir holds the local capture logs from the investigation; it's gitignored since the
@@ -32,8 +31,8 @@ Diagnosed 2026-06-24 with `mtgo-diag.py`. Two independent causes, both now fixed
 
 1. **WPF UI thread pinned at ~100% CPU** when a large result set populated. Cause: under
    Wine, WPF builds a UI-Automation peer for every grid item and runs the stylus/touch
-   input thread. Fix — four MTGO appSettings flipped to `true` (applied by `mtgo-tune.py`,
-   re-run on every launch so MTGO updates can't undo it):
+   input thread. Fix — four MTGO appSettings flipped to `true` (re-applied by
+   `mtgo-launch.sh` on every launch so MTGO's frequent updates can't undo it):
    `DisableAutomationPeer`, `PurgeAutomationEvents`, `DisableStylusInput`, `DisableTabletDevices`.
 2. **Lock convoy / delayed wakeups** — after #1, scrolling spawned a swarm of image-load
    threads (hundreds of HTTP connections) that piled up on locks and only released on a
@@ -61,6 +60,18 @@ You also have a **Flatpak** Lutris (`net.lutris.Lutris`), which was running duri
 so the entry was **not** added there (editing a live DB is unsafe). To add it to the
 Flatpak Lutris: import `magic-the-gathering-online.yml` via **+ → Install from a local
 file** (it installs to the same `~/Games/magic-the-gathering-online` path).
+
+## Known issues
+
+- **Some card images occasionally never load** (blank/placeholder art until you re-scroll or
+  re-open the view). This *also* happens on Windows MTGO intermittently, so it's partly an
+  upstream MTGO bug — but it appears **somewhat more frequent under Wine**, so treat it as a
+  **partial regression** (tracked in [#1](https://github.com/phever/mtgo-linux/issues/1)).
+  Likely aggravated by the image-load
+  connection swarm under Wine (we observed 200–688 concurrent HTTP connections during a scroll);
+  some fetches get dropped. Still far more usable than before the freeze fix. Candidate future
+  fix to investigate: cap concurrent connections via a `.NET` `<connectionManagement>` /
+  `maxconnection` setting in `MTGO.exe.config`.
 
 ## Notes / troubleshooting
 

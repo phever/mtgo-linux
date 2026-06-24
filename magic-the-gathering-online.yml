@@ -1,25 +1,29 @@
 # Magic: The Gathering Online — Lutris install script (GE-Proton, 2026 edition)
 # =============================================================================
 # Verified working 2026-06-24 on Arch Linux with GE-Proton11-1 + Lutris 0.5.22.
-# Reaches the MTGO login screen (passes EULA validation, the historical crash point).
+# Reaches the MTGO login screen and scrolls the collection without the long freezes.
 #
 # What changed vs. the old community "LATEST" script (lutris.net id 16253):
 #   * Runner is GE-Proton (latest, via umu) instead of plain system Wine 5.x-era.
-#   * Drops obsolete winetricks verbs:
-#       - win7      : not needed — dotnet48 already leaves the prefix at Win7 SP1,
-#                     and GE-Proton defaults are fine.
-#       - sound=pulse : replaced with sound=disabled (see below).
-#   * ADDS  sound=disabled  — MTGO crashes under Wine the moment a sound is
-#     triggered (EULA validation / match start; WineHQ bug 48852). Disabling the
-#     Wine audio driver is the reliable fix. This is THE change that makes it run.
-#   * Launches setup.exe (the ClickOnce bootstrapper), NOT MTGO.exe directly.
-#     MTGO is a ClickOnce/.NET deployment; running the deployed MTGO.exe directly
-#     errors with "This is a networked application". setup.exe activates the
-#     installed app correctly.
-#   * Installs to ~/Games/magic-the-gathering-online (Lutris default for this slug).
+#   * Drops obsolete winetricks verbs (win7 — dotnet48 already leaves the prefix at
+#     Win7 SP1; sound=pulse — replaced with sound=disabled).
+#   * sound=disabled — MTGO crashes under Wine the moment a sound is triggered
+#     (EULA validation / match start; WineHQ bug 48852). This makes it launch.
+#   * Launches setup.exe (the ClickOnce bootstrapper), NOT MTGO.exe directly
+#     (running MTGO.exe directly errors "This is a networked application").
+#
+# Freeze fixes for collection scroll/search (diagnosed 2026-06-24):
+#   * PROTON_NO_NTSYNC=1 — GE-Proton11's brand-new in-kernel ntsync convoyed MTGO's
+#     image-load threads on locks with delayed wakeups -> 30s-2min freezes. fsync
+#     (the fallback) wakes them promptly and the freezes vanish.
+#   * WPF flags — DisableAutomationPeer/PurgeAutomationEvents/DisableStylusInput/
+#     DisableTabletDevices stop the WPF UI-Automation peer storm + stylus thread that
+#     pinned the UI thread at 100% CPU. Applied each launch via the generated
+#     mtgo-launch.sh (MTGO updates a lot and revert MTGO.exe.config).
 #
 # Install:  lutris -i magic-the-gathering-online.yml
 #           (or GUI: + → "Install game from a local file")
+# Then launch from Lutris, or run $GAMEDIR/mtgo-launch.sh directly.
 name: Magic The Gathering Online
 game_slug: magic-the-gathering-online
 slug: magic-the-gathering-online-ge-proton
@@ -39,12 +43,12 @@ game:
 wine:
   version: ge-proton
 
-# Disable GE-Proton11's brand-new in-kernel ntsync. With it, scrolling/searching the
-# collection convoyed MTGO's image-load threads on locks with delayed wakeups ->
-# 30s-2min freezes. fsync (the fallback) wakes them promptly and the freezes vanish.
 system:
   env:
     PROTON_NO_NTSYNC: '1'
+  # Re-apply the WPF perf flags before every launch (MTGO updates revert them).
+  prelaunch_command: bash $GAMEDIR/mtgo-launch.sh --tune-only
+  prelaunch_wait: true
 
 installer:
 - task:
@@ -69,14 +73,52 @@ installer:
     prefix: $GAMEDIR
     executable: setup
     exclude_processes: dfsvc.exe
-# Keep setup.exe inside the prefix so the launcher (game.exe) can re-activate MTGO.
+# Keep setup.exe inside the prefix so game.exe / the launcher can re-activate MTGO.
 - copy:
     src: setup
     dst: $GAMEDIR
-# Fix the collection-scroll/search freeze (CPU-bound WPF UI thread): turn on MTGO's
-# own WPF-under-Wine mitigations — disables the UI Automation peer storm and the
-# WPF stylus/touch input thread. (Reverts on MTGO update; re-run if it returns.)
+# Generate a self-contained launcher in the prefix. It auto-detects umu-run + the
+# newest GE-Proton, re-applies the WPF freeze fix on every run, and disables ntsync.
+# ($HOME is substituted by Lutris at install; all shell vars are left intact.)
+- write_file:
+    file: $GAMEDIR/mtgo-launch.sh
+    content: |
+      #!/usr/bin/env bash
+      # Launch the installed MTGO under GE-Proton with the Linux freeze fixes applied.
+      #   ./mtgo-launch.sh              launch MTGO
+      #   ./mtgo-launch.sh --tune-only  only re-apply the WPF config flags, then exit
+      #   WINEPREFIX=/path ./mtgo-launch.sh   override the install location
+      set -euo pipefail
+      SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      if [ -d "$SELF_DIR/drive_c" ]; then
+        export WINEPREFIX="${WINEPREFIX:-$SELF_DIR}"
+      else
+        export WINEPREFIX="${WINEPREFIX:-$HOME/Games/magic-the-gathering-online}"
+      fi
+      # FIX 1: WPF flags stop the UI-Automation/stylus storm that pins the UI thread.
+      find "$WINEPREFIX" -path '*Apps/2.0*' -name MTGO.exe.config -exec sed -i -E \
+        's/("(DisableAutomationPeer|PurgeAutomationEvents|DisableStylusInput|DisableTabletDevices)" value=")false/\1true/g' \
+        {} + 2>/dev/null || true
+      if [ "${1:-}" = "--tune-only" ]; then
+        echo "MTGO WPF flags applied in $WINEPREFIX"; exit 0
+      fi
+      UMU=""
+      for c in "$HOME/.local/share/lutris/runtime/umu/umu-run" \
+               "$HOME/.var/app/net.lutris.Lutris/data/lutris/runtime/umu/umu-run" \
+               "$(command -v umu-run 2>/dev/null || true)"; do
+        if [ -n "$c" ] && [ -x "$c" ]; then UMU="$c"; break; fi
+      done
+      if [ -z "$UMU" ]; then echo "umu-run not found (install Lutris or umu-launcher)" >&2; exit 1; fi
+      PROTONPATH="${PROTONPATH:-$(ls -d "$HOME"/.local/share/Steam/compatibilitytools.d/GE-Proton* \
+        "$HOME"/.steam/root/compatibilitytools.d/GE-Proton* 2>/dev/null | sort -V | tail -1 || true)}"
+      [ -z "$PROTONPATH" ] && PROTONPATH="GE-Proton"
+      export PROTONPATH
+      export GAMEID="umu-mtgo" STORE="none" PROTON_VERB="waitforexitandrun"
+      # FIX 2: ntsync (GE-Proton11) convoyed image-load threads -> long freezes; use fsync.
+      export PROTON_NO_NTSYNC=1
+      exec "$UMU" "$WINEPREFIX/setup.exe" "$@"
 - execute:
-    command: >
-      find "$GAMEDIR" -path '*Apps/2.0*' -name MTGO.exe.config -exec sed -i -E
-      's/("(DisableAutomationPeer|PurgeAutomationEvents|DisableStylusInput|DisableTabletDevices)" value=")false/\1true/g' {} +
+    command: chmod +x $GAMEDIR/mtgo-launch.sh
+# Apply the WPF flags once now (first launch is already smooth).
+- execute:
+    command: bash $GAMEDIR/mtgo-launch.sh --tune-only
