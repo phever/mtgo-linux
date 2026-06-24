@@ -82,3 +82,8 @@ file** (it installs to the same `~/Games/magic-the-gathering-online` path).
 - **Sound:** intentionally off. Re-enabling it (`winetricks sound=pulse`) risks the startup crash.
 - **Re-running the installer** is safe; it re-uses the existing deployment.
 - DB backup before registration: `~/.local/share/lutris/pga.db.bak-*`.
+
+## License
+
+[GPL-3.0](LICENSE). MTGO itself is proprietary (© Daybreak Game Company); this repo only
+contains install/launch tooling and configuration for running the official client under Wine.
