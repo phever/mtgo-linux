@@ -69,9 +69,12 @@ file** (it installs to the same `~/Games/magic-the-gathering-online` path).
   **partial regression** (tracked in [#1](https://github.com/phever/mtgo-linux/issues/1)).
   Likely aggravated by the image-load
   connection swarm under Wine (we observed 200–688 concurrent HTTP connections during a scroll);
-  some fetches get dropped. Still far more usable than before the freeze fix. Candidate future
-  fix to investigate: cap concurrent connections via a `.NET` `<connectionManagement>` /
-  `maxconnection` setting in `MTGO.exe.config`.
+  some fetches get dropped. Still far more usable than before the freeze fix.
+  **Investigated and ruled out** (see [#1](https://github.com/phever/mtgo-linux/issues/1)): a `.NET`
+  `<connectionManagement>`/`maxconnection` cap (MTGO overrides the limit in code) and fd exhaustion
+  (the fd limit is 524288 with huge headroom). Appears to be individual fetch failures under high
+  concurrency that MTGO doesn't retry — not fixable from the Wine side. **Workaround:** re-scroll /
+  reopen the collection view to retry the missing images.
 
 ## Notes / troubleshooting
 
